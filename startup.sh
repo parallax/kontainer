@@ -1,6 +1,7 @@
 #!/bin/bash
 
 DOCKERIMAGE=140358210270.dkr.ecr.eu-west-1.amazonaws.com/fargate:test
+PORT=80
 
 # Update
 yum update && yum -y upgrade
@@ -17,7 +18,7 @@ echo_supervisord_conf > /etc/supervisord.conf
 # Create startup command
 echo "
 [program:container]
-command=docker run --expose 80 -p 80:80 $DOCKERIMAGE
+command=docker run --name Kontainer --expose $PORT -p $PORT:$PORT $DOCKERIMAGE
 stdout_logfile=/tmp/container-stdout.log
 stdout_logfile_maxbytes=1000000
 stderr_logfile=/tmp/container-stderr.log
