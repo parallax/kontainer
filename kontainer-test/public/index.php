@@ -1,13 +1,4 @@
 <?php
-require_once('vendor/autoload.php');
-use \Rollbar\Rollbar;
-use \Rollbar\Payload\Level;
-Rollbar::init(
-    array(
-        'access_token' => '3f0a6734284d415aa7170476628795c5',
-        'environment' => 'development'
-    )
-);
 
 echo "Build: ";
 echo $_ENV['BUILD'];

@@ -308,8 +308,31 @@ $rolePolicyDocument = '{
 
         $this->info('Namespace IAM policy is ' . $namespacePolicyArn);
 
-        exit;
+        // Make sure that the namespace instance profile exists
+        $instanceProfiles = $iam->ListInstanceProfiles([])['InstanceProfiles'];
 
+        $instanceProfileExists = false;
+
+        foreach ($instanceProfiles as $key => $instanceProfile) {
+            if ($instanceProfile['InstanceProfileName'] == $namespace . '-' . $environment . '-namespace') {
+                $instanceProfileExists = true;
+                $this->info('Instance Profile ' . $namespace . '-' . $environment . '-namespace' . ' already exists');
+                $namespaceInstanceProfileArn = $instanceProfile['Arn'];
+            }
+        }
+
+        if ($instanceProfileExists == false) {
+            $namespaceInstanceProfileArn = $iam->createInstanceProfile([
+                'InstanceProfileName' => $namespace . '-' . $environment . '-namespace',
+            ])['InstanceProfile']['Arn'];
+
+            // Attach the role to the instance profile
+            $iam->addRoleToInstanceProfile([
+                'InstanceProfileName' => $namespace . '-' . $environment . '-namespace',
+                'RoleName' => $namespace . '-' . $environment
+            ]);
+            $this->info('Attached role to instance profile');
+        }
 
         // The user data to launch instances with:
         $userData = '#!/bin/bash
@@ -375,7 +398,7 @@ supervisord -n -c /etc/supervisord.conf';
                     'SecurityGroupIds' => [$namespaceSecurityGroup, $dockerFileSecurityGroup],
                     'UserData' => base64_encode($thisUserData),
                     'IamInstanceProfile' => [
-                        'Arn' => 'arn:aws:iam::140358210270:instance-profile/ecs-ecr-role'
+                        'Arn' => $namespaceInstanceProfileArn
                     ],
                 ]
             ])['LaunchTemplate']['LaunchTemplateId'];
