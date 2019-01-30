@@ -1,0 +1,12 @@
+FROM prlx/prlx-nginx-php-fpm:7.2-master
+
+ARG SHOUT=QUIET
+
+RUN echo $SHOUT
+
+# Add the source code
+ADD /public /src/public
+
+RUN mkdir -p /src/public/uploads
+
+RUN chmod -R 777 /src/public/uploads

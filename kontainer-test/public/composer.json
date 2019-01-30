@@ -1,0 +1,7 @@
+{
+    "require": {
+        "rivsen/hello-world": "^0.1.0",
+        "predis/predis": "^1.1",
+        "rollbar/rollbar": "~1.5"
+    }
+}
