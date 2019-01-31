@@ -7,10 +7,13 @@ use LaravelZero\Framework\Commands\Command;
 use Aws\Ecr\EcrClient as EcrClient;
 use Aws\Ec2\Ec2Client as Ec2Client;
 use Aws\Iam\IamClient as IamClient;
+use Aws\AutoScaling\AutoScalingClient as AutoScalingClient;
 use josegonzalez\Dotenv\Loader as Loader;
 use Amp\Loop;
 use Amp\Parallel\Worker;
 use Amp\Promise;
+use Aws\Exception\AwsException;
+use Aws\Iam\Exception\IamException;
 
 class Deploy extends Command
 {
@@ -137,6 +140,7 @@ class Deploy extends Command
 
         function dockerfileBuild($dockerFile, $tag, $directory) {
             // Build
+            $ecrLogin = exec('$(aws ecr get-login --no-include-email)');
             $dockerOutput = system("docker build --compress=true --file kontainer/docker/$dockerFile -t $tag $directory", $dockerBuild);
             if ($dockerBuild != 0) {
                 throw new \RuntimeException("Docker build failed for $dockerFile - see logs above", 1);
@@ -150,7 +154,7 @@ class Deploy extends Command
         }
         
         foreach ($dockerFiles as $key => $value) {
-            //dockerfileBuild($dockerFile, $repositoryInfo['repositoryUri'] . ':' . $dockerFile . '-' . $build, $directory);
+            dockerfileBuild($dockerFile, $repositoryInfo['repositoryUri'] . ':' . $dockerFile . '-' . $build, $directory);
         }
 
         // The docker images should exist at $repositoryInfo['repositoryUri']:$dockerFile-$build now
@@ -164,7 +168,7 @@ class Deploy extends Command
 
         $ec2 = new Ec2Client($awsOptions);
 
-        function ensureSecurityGroup($securityGroupName, $ec2) {
+        function ensureSecurityGroup($securityGroupName, $ec2, $port = null) {
             $securityGroups = $ec2->describeSecurityGroups([
                 'Filters' => [
                     [
@@ -208,6 +212,31 @@ class Deploy extends Command
                     ],
                 ]);
     
+            }
+
+            // If a port has been passed then we need to enable access to it from the ingress security group
+            if ($port !== null) {
+                try { 
+                    $ec2->authorizeSecurityGroupIngress([
+                        'GroupId' => $returnSecurityGroupId,
+                        'IpPermissions' => [
+                            [
+                                'IpProtocol' => 'tcp',
+                                'ToPort' => $port,
+                                'FromPort' => $port,
+                                'UserIdGroupPairs' => [
+                                    [
+                                        'Description' => 'Service Ingress Access',
+                                        'GroupId' => env('AWS_INGRESS_SECURITY_GROUP_ID'),
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ]);
+                }
+                catch (AwsException $e) {
+                    //return ''; 
+                }
             }
 
             return $returnSecurityGroupId;
@@ -377,12 +406,14 @@ supervisord -n -c /etc/supervisord.conf';
 
         foreach ($dockerFiles as $key => $dockerFile) {
 
+            $dockerPort = '80';
+
             // Create a security group for this dockerFile
-            $dockerFileSecurityGroup = ensureSecurityGroup($dockerFile . '-' . $namespace . '-' . $environment, $ec2);
+            $dockerFileSecurityGroup = ensureSecurityGroup($dockerFile . '-' . $namespace . '-' . $environment, $ec2, $dockerPort);
 
             // Replace variables in the user data
             $thisUserData = str_replace('{{DOCKERIMAGE}}', $repositoryInfo['repositoryUri'] . ':' . $dockerFile . '-' . $build, $userData);
-            $thisUserData = str_replace('{{DOCKERPORT}}', '80', $thisUserData);
+            $thisUserData = str_replace('{{DOCKERPORT}}', $dockerPort, $thisUserData);
 
             // Create launch templates
             $launchTemplate = $ec2->createLaunchTemplate([
@@ -404,6 +435,49 @@ supervisord -n -c /etc/supervisord.conf';
             ])['LaunchTemplate']['LaunchTemplateId'];
 
             $this->info('Created launch template ' . $dockerFile . '-' . $namespace . '-' . $branch . '-' . $environment . '-' . $build . ' with id ' . $launchTemplate);
+
+            // Create autoscaling group
+            $awsOptions = [
+                'region'            => 'eu-west-1',
+                'version'           => '2011-01-01',
+            ];
+    
+            $autoscaling = new AutoScalingClient($awsOptions);
+
+            $desiredCapacity = 1;
+            $minCapacity = 1;
+            $maxCapacity = 10;
+
+            // Create autoscaling group:
+            $autoscaling->createAutoScalingGroup([
+                'AutoScalingGroupName' => $dockerFile . '-' . $namespace . '-' . $branch . '-' . $environment . '-' . $build,
+                'DefaultCooldown' => 60,
+                'DesiredCapacity' => $desiredCapacity,
+                'HealthCheckGracePeriod' => 300,
+                'HealthCheckType' => 'EC2',
+                'LaunchTemplate' => [
+                    'LaunchTemplateId' => $launchTemplate,
+                    'Version' => '$Latest',
+                ],
+                'MaxSize' => $maxCapacity,
+                'MinSize' => $minCapacity,
+                'NewInstancesProtectedFromScaleIn' => false,
+                'Tags' => [
+                    [
+                        'Key' => 'Name',
+                        'PropagateAtLaunch' => true,
+                        'Value' => $dockerFile . '-' . $namespace . '-' . $branch . '-' . $environment . '-' . $build,
+                    ],
+                    [
+                        'Key' => 'namespace',
+                        'PropagateAtLaunch' => true,
+                        'Value' => $namespace,
+                    ],
+                ],
+                //'TargetGroupARNs' => ['<string>', ...],
+                'TerminationPolicies' => ['OldestInstance'],
+                'VPCZoneIdentifier' => env('AWS_PRIVATE_AZ_A_SUBNET') . ',' . env('AWS_PRIVATE_AZ_B_SUBNET') . ',' . env('AWS_PRIVATE_AZ_C_SUBNET'),
+            ]);
 
         }
 
