@@ -1,0 +1,6 @@
+curl --request PUT --data 'Host:52.19.46.232' http://internal-consul-1137894369.eu-west-1.elb.amazonaws.com:8500/v1/kv/traefik/frontends/frontend1/routes/test_1/rule
+curl --request PUT --data 'backend1' http://internal-consul-1137894369.eu-west-1.elb.amazonaws.com:8500/v1/kv/traefik/frontends/frontend1/backend
+curl --request PUT --data 'wrr' http://internal-consul-1137894369.eu-west-1.elb.amazonaws.com:8500/v1/kv/traefik/backends/backend1/loadbalancer/method
+curl --request PUT --data 'http://10.24.248.239:80' http://internal-consul-1137894369.eu-west-1.elb.amazonaws.com:8500/v1/kv/traefik/backends/backend1/servers/i-0c6ccbf4f9ff27f85/url
+curl --request PUT --data '/healthz' http://internal-consul-1137894369.eu-west-1.elb.amazonaws.com:8500/v1/kv/traefik/backends/backend1/healthcheck/path
+curl --request PUT --data '10s' http://internal-consul-1137894369.eu-west-1.elb.amazonaws.com:8500/v1/kv/traefik/backends/backend1/healthcheck/interval

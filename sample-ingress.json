@@ -1,0 +1,28 @@
+{
+    "frontends": {
+      "frontend1": {
+        "routes": {
+          "test_1": {
+            "rule": "Host:34.247.245.249"
+          }
+        },
+        "backend": "backend1"
+      }
+    },
+    "backends": {
+      "backend1": {
+        "loadBalancer": {
+          "method": "wrr"
+        },
+        "circuitBreaker": {
+          "expression": "NetworkErrorRatio() > 0.5"
+        },
+        "servers": {
+          "server1": {
+            "weight": 10,
+            "url": "http://10.24.248.239:80"
+          }
+        }
+      }
+    }
+}
