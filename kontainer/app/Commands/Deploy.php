@@ -87,7 +87,7 @@ class Deploy extends Command
                 'repositoryName' => $namespace,
                 'tags' => [
                     [
-                        'Key' => 'namespace',
+                        'Key' => 'Namespace',
                         'Value' => $namespace
                     ]
                 ]
@@ -216,27 +216,22 @@ class Deploy extends Command
 
             // If a port has been passed then we need to enable access to it from the ingress security group
             if ($port !== null) {
-                try { 
-                    $ec2->authorizeSecurityGroupIngress([
-                        'GroupId' => $returnSecurityGroupId,
-                        'IpPermissions' => [
-                            [
-                                'IpProtocol' => 'tcp',
-                                'ToPort' => $port,
-                                'FromPort' => $port,
-                                'UserIdGroupPairs' => [
-                                    [
-                                        'Description' => 'Service Ingress Access',
-                                        'GroupId' => env('AWS_INGRESS_SECURITY_GROUP_ID'),
-                                    ],
+                $ec2->authorizeSecurityGroupIngress([
+                    'GroupId' => $returnSecurityGroupId,
+                    'IpPermissions' => [
+                        [
+                            'IpProtocol' => 'tcp',
+                            'ToPort' => $port,
+                            'FromPort' => $port,
+                            'UserIdGroupPairs' => [
+                                [
+                                    'Description' => 'Service Ingress Access',
+                                    'GroupId' => env('AWS_INGRESS_SECURITY_GROUP_ID'),
                                 ],
                             ],
                         ],
-                    ]);
-                }
-                catch (AwsException $e) {
-                    //return ''; 
-                }
+                    ],
+                ]);
             }
 
             return $returnSecurityGroupId;
@@ -409,7 +404,7 @@ supervisord -n -c /etc/supervisord.conf';
             $dockerPort = '80';
 
             // Create a security group for this dockerFile
-            $dockerFileSecurityGroup = ensureSecurityGroup($dockerFile . '-' . $namespace . '-' . $environment, $ec2, $dockerPort);
+            $dockerFileSecurityGroup = ensureSecurityGroup($dockerFile . '-' . $namespace . '-' . $environment . '-' . $build, $ec2, $dockerPort);
 
             // Replace variables in the user data
             $thisUserData = str_replace('{{DOCKERIMAGE}}', $repositoryInfo['repositoryUri'] . ':' . $dockerFile . '-' . $build, $userData);
@@ -469,9 +464,29 @@ supervisord -n -c /etc/supervisord.conf';
                         'Value' => $dockerFile . '-' . $namespace . '-' . $branch . '-' . $environment . '-' . $build,
                     ],
                     [
-                        'Key' => 'namespace',
+                        'Key' => 'Namespace',
                         'PropagateAtLaunch' => true,
                         'Value' => $namespace,
+                    ],
+                    [
+                        'Key' => 'Service',
+                        'PropagateAtLaunch' => true,
+                        'Value' => $dockerFile,
+                    ],
+                    [
+                        'Key' => 'Build',
+                        'PropagateAtLaunch' => true,
+                        'Value' => $build,
+                    ],
+                    [
+                        'Key' => 'Environment',
+                        'PropagateAtLaunch' => true,
+                        'Value' => $environment,
+                    ],
+                    [
+                        'Key' => 'Branch',
+                        'PropagateAtLaunch' => true,
+                        'Value' => $branch,
                     ],
                 ],
                 //'TargetGroupARNs' => ['<string>', ...],
@@ -479,7 +494,54 @@ supervisord -n -c /etc/supervisord.conf';
                 'VPCZoneIdentifier' => env('AWS_PRIVATE_AZ_A_SUBNET') . ',' . env('AWS_PRIVATE_AZ_B_SUBNET') . ',' . env('AWS_PRIVATE_AZ_C_SUBNET'),
             ]);
 
+            $this->info('Created autoscaling group ' . $dockerFile . '-' . $namespace . '-' . $branch . '-' . $environment . '-' . $build);
+
         }
+
+
+
+        // Delete old autoscaling groups
+        // This should run after some checks have been done regarding blue/green deployment status - for now we'll just run it
+        foreach ($dockerFiles as $key => $dockerFile) {
+
+            $this->info('Finding stale autoscaling groups for ' . $dockerFile . '-' . $namespace . '-' . $branch . '-' . $environment);
+
+            $autoscalingGroups = $autoscaling->DescribeAutoScalingGroups([]);
+
+            // Loop through the autoscaling groups and find ones that match but aren't the current build
+            foreach ($autoscalingGroups['AutoScalingGroups'] as $key => $autoScalingGroup) {
+                $namespaceMatch = false;
+                $buildMatch = false;
+                $branchMatch = false;
+                $environmentMatch = false;
+
+                // Loop through the tags that we use as metadata
+                foreach ($autoScalingGroup['Tags'] as $key => $tag) {
+                    if ($tag['Key'] == 'Branch' && $tag['Value'] == $branch) {
+                        $branchMatch = true;
+                    }
+                    if ($tag['Key'] == 'Build' && $tag['Value'] != $build) {
+                        $buildMatch = true;
+                    }
+                    if ($tag['Key'] == 'Environment' && $tag['Value'] == $environment) {
+                        $environmentMatch = true;
+                    }
+                    if ($tag['Key'] == 'Namespace' && $tag['Value'] == $namespace) {
+                        $namespaceMatch = true;
+                    }
+                }
+                if ($namespaceMatch && $buildMatch && $branchMatch && $environmentMatch) {
+                    $this->info('Found ' . $autoScalingGroup['AutoScalingGroupName'] . ' for deletion');
+                    $autoscaling->deleteAutoScalingGroup([
+                        'AutoScalingGroupName' => $autoScalingGroup['AutoScalingGroupName'],
+                        'ForceDelete' => true
+                    ]);
+                    $this->info('Deleted ' . $autoScalingGroup['AutoScalingGroupName']);
+                }
+            }
+
+        }
+
 
             
 
